@@ -49,30 +49,21 @@ def setup_rag_chain(text: str):
     # Reset vector store for new document
     vector_store = None
     
-    # Split Text
+    # Split Text into smaller chunks suitable for local MiniLM embedding model
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = text_splitter.create_documents([text])
 
-    # Create Embeddings and Vector Store with batching to avoid 429 Rate Limit
-    import time
+    # Create Embeddings and Vector Store (Using Local HuggingFace model to bypass Gemini API Quotas!)
+    from langchain_community.embeddings import HuggingFaceEmbeddings
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+        # all-MiniLM-L6-v2 is a small, fast local embedding model
+        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         
-        # Batch processing to respect free-tier rate limits
-        batch_size = 5
-        for i in range(0, len(chunks), batch_size):
-            batch = chunks[i : i + batch_size]
-            if vector_store is None:
-                vector_store = FAISS.from_documents(documents=batch, embedding=embeddings)
-            else:
-                vector_store.add_documents(documents=batch)
-            
-            # Sleep briefly to avoid hitting the Gemini API quota limit
-            if i + batch_size < len(chunks):
-                time.sleep(1.5)
+        # We can now process all chunks at once since we are running locally!
+        vector_store = FAISS.from_documents(documents=chunks, embedding=embeddings)
                 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error creating embeddings: {str(e)}. Check your GOOGLE_API_KEY.")
+        raise HTTPException(status_code=500, detail=f"Error creating local embeddings: {str(e)}")
 
     # Create Retriever
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})

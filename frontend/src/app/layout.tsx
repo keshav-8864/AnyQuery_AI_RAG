@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "VideoQuery AI",
-  description: "Chat with YouTube videos using LangChain & Gemini",
+  title: "AnyQuery AI",
+  description: "Chat with YouTube videos and PDF Documents using AI",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -3,6 +3,8 @@
 import { useState, useRef } from "react";
 import { PlayCircle, Search, Send, Loader2, Bot, User, FileText, Upload } from "lucide-react";
 
+import ReactMarkdown from "react-markdown";
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"youtube" | "pdf">("youtube");
   const [url, setUrl] = useState("");
@@ -16,7 +18,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [isSending, setIsSending] = useState(false);
 
-  const BACKEND_URL = "http://localhost:8000";
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
   const handleProcessVideo = async () => {
     if (!url) return;
@@ -105,8 +107,8 @@ export default function Home() {
         <div className="md:col-span-4 bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex flex-col gap-6">
           <div>
             <h1 className="text-3xl font-extrabold text-slate-900 flex items-center gap-3">
-              <PlayCircle className="text-rose-500 w-10 h-10" />
-              VideoQuery AI
+              <Bot className="text-indigo-600 w-10 h-10" />
+              AnyQuery AI
             </h1>
             <p className="text-slate-500 text-sm mt-2 font-medium">Chat with YouTube videos and PDFs using AI</p>
           </div>
@@ -132,9 +134,11 @@ export default function Home() {
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">YouTube URL</label>
                   <input
+                    id="youtube-url"
+                    name="youtube-url"
                     type="text"
                     placeholder="https://youtube.com/watch?v=..."
-                    value={url || ""}
+                    value={url ?? ""}
                     onChange={(e) => setUrl(e.target.value)}
                     className="w-full px-4 py-3 bg-slate-50 text-slate-900 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all placeholder:text-slate-400"
                   />
@@ -229,8 +233,14 @@ export default function Home() {
                     <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm border ${msg.role === "user" ? "bg-indigo-600 text-white border-indigo-700" : "bg-white text-slate-600 border-slate-200"}`}>
                       {msg.role === "user" ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
                     </div>
-                    <div className={`px-5 py-3 rounded-2xl shadow-sm leading-relaxed ${msg.role === "user" ? "bg-indigo-600 text-white rounded-tr-none" : "bg-white text-slate-700 border border-slate-200 rounded-tl-none"} whitespace-pre-wrap`}>
-                      {msg.content}
+                    <div className={`px-5 py-3 rounded-2xl shadow-sm leading-relaxed ${msg.role === "user" ? "bg-indigo-600 text-white rounded-tr-none" : "bg-white text-slate-700 border border-slate-200 rounded-tl-none"}`}>
+                      {msg.role === "user" ? (
+                        <div className="whitespace-pre-wrap">{msg.content}</div>
+                      ) : (
+                        <div className="prose prose-sm prose-slate max-w-none">
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -254,8 +264,10 @@ export default function Home() {
           <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-slate-200">
             <div className="relative flex items-center">
               <input
+                id="chat-query"
+                name="chat-query"
                 type="text"
-                value={query || ""}
+                value={query ?? ""}
                 onChange={(e) => setQuery(e.target.value)}
                 disabled={!isProcessed || isSending}
                 placeholder={isProcessed ? "Ask a question about the content..." : "Process content first..."}
