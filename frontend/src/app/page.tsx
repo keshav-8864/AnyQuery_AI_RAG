@@ -100,6 +100,15 @@ export default function Home() {
     }
   };
 
+  const handleTabSwitch = (tab: "youtube" | "pdf") => {
+    setActiveTab(tab);
+    setMessages([]);
+    setUrl("");
+    setPdfFile(null);
+    setIsProcessed(false);
+    setQuery("");
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-4 font-sans text-slate-900">
       <div className="max-w-5xl w-full grid grid-cols-1 md:grid-cols-12 gap-6 h-[85vh]">
@@ -115,13 +124,13 @@ export default function Home() {
 
           <div className="flex bg-slate-100 p-1 rounded-xl">
             <button
-              onClick={() => setActiveTab("youtube")}
+              onClick={() => handleTabSwitch("youtube")}
               className={`flex-1 py-2 text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${activeTab === "youtube" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
             >
               <PlayCircle className="w-4 h-4" /> YouTube
             </button>
             <button
-              onClick={() => setActiveTab("pdf")}
+              onClick={() => handleTabSwitch("pdf")}
               className={`flex-1 py-2 text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${activeTab === "pdf" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
             >
               <FileText className="w-4 h-4" /> PDF
