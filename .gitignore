@@ -1,0 +1,12 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.env
+backendrun.txt
+
+# Next.js / Node
+node_modules/
+.next/
+out/
+.env*.local
