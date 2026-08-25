@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import re
@@ -13,6 +13,8 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from pypdf import PdfReader
+import io
 
 load_dotenv()
 
@@ -41,53 +43,34 @@ class ChatRequest(BaseModel):
 def format_docs(docs):
     return "\\n\\n".join(doc.page_content for doc in docs)
 
-@app.post("/process")
-def process_video(request: ProcessRequest):
+def setup_rag_chain(text: str):
     global vector_store, rag_chain
-
-    # Extract Video ID
-    video_id = None
-    if "youtube.com" in request.url:
-        match = re.search(r"v=([A-Za-z0-9_-]+)", request.url)
-        if match:
-            video_id = match.group(1)
-    elif "youtu.be" in request.url:
-        match = re.search(r"youtu\\.be/([A-Za-z0-9_-]+)", request.url)
-        if match:
-            video_id = match.group(1)
     
-    if not video_id:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL")
-
-    # Fetch Transcript
-    try:
-        api = YouTubeTranscriptApi()
-        if request.language == "auto":
-            # Fetch the first available transcript
-            transcript_list = api.list(video_id)
-            t = next(iter(transcript_list))
-            transcript_data = t.fetch()
-        else:
-            transcript_list = api.list(video_id)
-            t = transcript_list.find_transcript([request.language])
-            transcript_data = t.fetch()
-        
-        transcript = " ".join(chunk.text for chunk in transcript_data)
-    except TranscriptsDisabled:
-        raise HTTPException(status_code=400, detail="Captions are disabled for this video.")
-    except NoTranscriptFound:
-        raise HTTPException(status_code=400, detail="Requested transcript not found for this language.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching transcript: {str(e)}")
-
-    # Split Transcript
+    # Reset vector store for new document
+    vector_store = None
+    
+    # Split Text
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = text_splitter.create_documents([transcript])
+    chunks = text_splitter.create_documents([text])
 
-    # Create Embeddings and Vector Store
+    # Create Embeddings and Vector Store with batching to avoid 429 Rate Limit
+    import time
     try:
         embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
-        vector_store = FAISS.from_documents(documents=chunks, embedding=embeddings)
+        
+        # Batch processing to respect free-tier rate limits
+        batch_size = 5
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i : i + batch_size]
+            if vector_store is None:
+                vector_store = FAISS.from_documents(documents=batch, embedding=embeddings)
+            else:
+                vector_store.add_documents(documents=batch)
+            
+            # Sleep briefly to avoid hitting the Gemini API quota limit
+            if i + batch_size < len(chunks):
+                time.sleep(1.5)
+                
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating embeddings: {str(e)}. Check your GOOGLE_API_KEY.")
 
@@ -124,14 +107,73 @@ Answer:"""
         | StrOutputParser()
     )
 
+
+@app.post("/process")
+def process_video(request: ProcessRequest):
+    # Extract Video ID
+    video_id = None
+    if "youtube.com" in request.url:
+        match = re.search(r"v=([A-Za-z0-9_-]+)", request.url)
+        if match:
+            video_id = match.group(1)
+    elif "youtu.be" in request.url:
+        match = re.search(r"youtu\\.be/([A-Za-z0-9_-]+)", request.url)
+        if match:
+            video_id = match.group(1)
+    
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+
+    # Fetch Transcript
+    try:
+        api = YouTubeTranscriptApi()
+        if request.language == "auto":
+            transcript_list = api.list(video_id)
+            t = next(iter(transcript_list))
+            transcript_data = t.fetch()
+        else:
+            transcript_list = api.list(video_id)
+            t = transcript_list.find_transcript([request.language])
+            transcript_data = t.fetch()
+        
+        transcript = " ".join(chunk.text for chunk in transcript_data)
+    except TranscriptsDisabled:
+        raise HTTPException(status_code=400, detail="Captions are disabled for this video.")
+    except NoTranscriptFound:
+        raise HTTPException(status_code=400, detail="Requested transcript not found for this language.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching transcript: {str(e)}")
+
+    setup_rag_chain(transcript)
     return {"success": True, "message": "Video processed successfully"}
+
+
+@app.post("/process-pdf")
+async def process_pdf(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        reader = PdfReader(io.BytesIO(contents))
+        text = ""
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\\n"
+        
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract text from PDF.")
+        
+        setup_rag_chain(text)
+        return {"success": True, "message": "PDF processed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+
 
 @app.post("/chat")
 def chat(request: ChatRequest):
     global rag_chain
 
     if not rag_chain:
-        raise HTTPException(status_code=400, detail="Please process a video first.")
+        raise HTTPException(status_code=400, detail="Please process a video or PDF first.")
 
     try:
         response = rag_chain.invoke(request.query)
