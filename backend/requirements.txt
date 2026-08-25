@@ -11,3 +11,4 @@ faiss-cpu
 youtube-transcript-api
 pypdf
 sentence-transformers
+python-multipart
