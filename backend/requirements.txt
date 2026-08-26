@@ -1,5 +1,3 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-
 fastapi
 uvicorn
 pydantic
@@ -10,5 +8,5 @@ langchain-community
 faiss-cpu
 youtube-transcript-api
 pypdf
-sentence-transformers
 python-multipart
+fastembed

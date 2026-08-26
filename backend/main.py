@@ -53,11 +53,11 @@ def setup_rag_chain(text: str):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = text_splitter.create_documents([text])
 
-    # Create Embeddings and Vector Store (Using Local HuggingFace model to bypass Gemini API Quotas!)
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+    # Create Embeddings and Vector Store (Using FastEmbed to bypass Render 512MB limit)
+    from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
     try:
-        # all-MiniLM-L6-v2 is a small, fast local embedding model
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        # FastEmbed uses ONNX and is extremely lightweight (<200MB RAM)
+        embeddings = FastEmbedEmbeddings()
         
         # We can now process all chunks at once since we are running locally!
         vector_store = FAISS.from_documents(documents=chunks, embedding=embeddings)
