@@ -50,7 +50,7 @@ def setup_rag_chain(text: str):
     vector_store = None
     
     # Split Text into smaller chunks suitable for local MiniLM embedding model
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=400)
     chunks = text_splitter.create_documents([text])
 
     # Create Embeddings and Vector Store (Using FastEmbed to bypass Render 512MB limit)
@@ -65,8 +65,8 @@ def setup_rag_chain(text: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating local embeddings: {str(e)}")
 
-    # Create Retriever
-    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+    # Create Retriever (Increased k from 3 to 15 to provide much more context to the AI)
+    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 15})
 
     # Setup RAG Chain
     prompt = ChatPromptTemplate.from_template(
