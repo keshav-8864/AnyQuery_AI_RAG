@@ -1,4 +1,5 @@
 import os
+from operator import itemgetter
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,11 +38,16 @@ class ProcessRequest(BaseModel):
     url: str
     language: str
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
 class ChatRequest(BaseModel):
     query: str
+    history: list[ChatMessage] = []
 
 def format_docs(docs):
-    return "\\n\\n".join(doc.page_content for doc in docs)
+    return "\n\n".join(doc.page_content for doc in docs)
 
 def setup_rag_chain(text: str):
     global vector_store, rag_chain
@@ -68,7 +74,7 @@ def setup_rag_chain(text: str):
     # Create Retriever (Increased k from 3 to 15 to provide much more context to the AI)
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 15})
 
-    # Setup RAG Chain
+    # Setup RAG Chain with memory
     prompt = ChatPromptTemplate.from_template(
         """You are a helpful AI assistant.
 Answer the user's question ONLY using the provided context.
@@ -78,6 +84,10 @@ If the answer is not available in the context, reply:
 -----------------------
 Context:
 {context}
+-----------------------
+
+Previous Chat History:
+{history}
 -----------------------
 
 Question:
@@ -90,8 +100,9 @@ Answer:"""
 
     rag_chain = (
         {
-            "context": retriever | format_docs,
-            "question": RunnablePassthrough(),
+            "context": itemgetter("question") | retriever | format_docs,
+            "question": itemgetter("question"),
+            "history": itemgetter("history")
         }
         | prompt
         | llm
@@ -167,7 +178,15 @@ def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Please process a video or PDF first.")
 
     try:
-        response = rag_chain.invoke(request.query)
+        # Format the chat history into a string
+        history_str = "\n".join(f"{msg.role.capitalize()}: {msg.content}" for msg in request.history)
+        if not history_str:
+            history_str = "No previous history."
+            
+        response = rag_chain.invoke({
+            "question": request.query,
+            "history": history_str
+        })
         return {"answer": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during chat: {str(e)}")

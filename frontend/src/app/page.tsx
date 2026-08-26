@@ -84,7 +84,10 @@ export default function Home() {
       const res = await fetch(`${BACKEND_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: userQuery }),
+        body: JSON.stringify({ 
+          query: userQuery,
+          history: messages.map(msg => ({ role: msg.role, content: msg.content }))
+        }),
       });
       const data = await res.json();
       
