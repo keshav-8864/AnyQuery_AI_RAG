@@ -1,27 +1,51 @@
+
 import os
+import io
+import re
 from operator import itemgetter
+
 from dotenv import load_dotenv
+
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import re
 
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from pydantic import BaseModel
+
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
 
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import (
+    YouTubeTranscriptApi,
+    TranscriptsDisabled,
+    NoTranscriptFound,
+)
+
 from pypdf import PdfReader
-import io
+
+
+# ============================================================
+# Load environment variables
+# ============================================================
 
 load_dotenv()
 
+
+# ============================================================
+# FastAPI app
+# ============================================================
+
 app = FastAPI()
 
-# Allow CORS for Next.js frontend
+
+# ============================================================
+# CORS
+# ============================================================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,55 +54,113 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variables to store our LangChain components
+
+# ============================================================
+# Global variables
+# ============================================================
+
 vector_store = None
 rag_chain = None
 
+
+# ============================================================
+# Request Models
+# ============================================================
+
 class ProcessRequest(BaseModel):
     url: str
-    language: str
+    language: str = "auto"
+
 
 class ChatMessage(BaseModel):
     role: str
     content: str
 
+
 class ChatRequest(BaseModel):
     query: str
     history: list[ChatMessage] = []
 
+
+# ============================================================
+# Helper: Format documents
+# ============================================================
+
 def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
+    return "\n\n".join(
+        doc.page_content for doc in docs
+    )
+
+
+# ============================================================
+# Setup RAG Chain
+# ============================================================
 
 def setup_rag_chain(text: str):
     global vector_store, rag_chain
-    
-    # Reset vector store for new document
+
+    # Reset previous vector store
     vector_store = None
-    
-    # Split Text into smaller chunks suitable for local MiniLM embedding model
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=400)
+    rag_chain = None
+
+    # --------------------------------------------------------
+    # Split text into chunks
+    # --------------------------------------------------------
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=2000,
+        chunk_overlap=400,
+    )
+
     chunks = text_splitter.create_documents([text])
 
-    # Create Embeddings and Vector Store (Using FastEmbed to bypass Render 512MB limit)
-    from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+    if not chunks:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not create document chunks."
+        )
+
+    # --------------------------------------------------------
+    # Create embeddings
+    # --------------------------------------------------------
+
     try:
-        # FastEmbed uses ONNX and is extremely lightweight (<200MB RAM)
         embeddings = FastEmbedEmbeddings()
-        
-        # We can now process all chunks at once since we are running locally!
-        vector_store = FAISS.from_documents(documents=chunks, embedding=embeddings)
-                
+
+        vector_store = FAISS.from_documents(
+            documents=chunks,
+            embedding=embeddings,
+        )
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error creating local embeddings: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creating embeddings/vector store: {str(e)}"
+        )
 
-    # Create Retriever (Increased k from 3 to 15 to provide much more context to the AI)
-    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 15})
+    # --------------------------------------------------------
+    # Retriever
+    # --------------------------------------------------------
 
-    # Setup RAG Chain with memory
+    retriever = vector_store.as_retriever(
+        search_type="similarity",
+        search_kwargs={
+            "k": 15
+        },
+    )
+
+    # --------------------------------------------------------
+    # Prompt
+    # --------------------------------------------------------
+
     prompt = ChatPromptTemplate.from_template(
-        """You are a helpful AI assistant.
+        """
+You are a helpful AI assistant.
+
 Answer the user's question ONLY using the provided context.
+
 If the answer is not available in the context, reply:
+
 "I don't know based on the provided context."
 
 -----------------------
@@ -93,16 +175,38 @@ Previous Chat History:
 Question:
 {question}
 
-Answer:"""
+Answer:
+"""
     )
 
-    llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0)
+    # --------------------------------------------------------
+    # Gemini
+    # --------------------------------------------------------
+
+    try:
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-3.6-flash",
+            temperature=0,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error initializing Gemini: {str(e)}"
+        )
+
+    # --------------------------------------------------------
+    # RAG Chain
+    # --------------------------------------------------------
 
     rag_chain = (
         {
-            "context": itemgetter("question") | retriever | format_docs,
+            "context": itemgetter("question")
+            | retriever
+            | format_docs,
+
             "question": itemgetter("question"),
-            "history": itemgetter("history")
+
+            "history": itemgetter("history"),
         }
         | prompt
         | llm
@@ -110,83 +214,259 @@ Answer:"""
     )
 
 
+# ============================================================
+# Helper: Extract YouTube Video ID
+# ============================================================
+
+def extract_video_id(url: str):
+
+    # --------------------------------------------------------
+    # Normal URL
+    # https://www.youtube.com/watch?v=P26AE7NLx4Q
+    # --------------------------------------------------------
+
+    match = re.search(
+        r"(?:youtube\.com/watch\?v=)([A-Za-z0-9_-]+)",
+        url,
+    )
+
+    if match:
+        return match.group(1)
+
+    # --------------------------------------------------------
+    # Short URL
+    # https://youtu.be/P26AE7NLx4Q
+    # --------------------------------------------------------
+
+    match = re.search(
+        r"(?:youtu\.be/)([A-Za-z0-9_-]+)",
+        url,
+    )
+
+    if match:
+        return match.group(1)
+
+    # --------------------------------------------------------
+    # Embedded URL
+    # https://www.youtube.com/embed/P26AE7NLx4Q
+    # --------------------------------------------------------
+
+    match = re.search(
+        r"(?:youtube\.com/embed/)([A-Za-z0-9_-]+)",
+        url,
+    )
+
+    if match:
+        return match.group(1)
+
+    return None
+
+
+# ============================================================
+# Process YouTube Video
+# ============================================================
+
 @app.post("/process")
 def process_video(request: ProcessRequest):
-    # Extract Video ID
-    video_id = None
-    if "youtube.com" in request.url:
-        match = re.search(r"v=([A-Za-z0-9_-]+)", request.url)
-        if match:
-            video_id = match.group(1)
-    elif "youtu.be" in request.url:
-        match = re.search(r"youtu\\.be/([A-Za-z0-9_-]+)", request.url)
-        if match:
-            video_id = match.group(1)
-    
-    if not video_id:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL")
 
+    # --------------------------------------------------------
+    # Extract Video ID
+    # --------------------------------------------------------
+
+    video_id = extract_video_id(request.url)
+
+    if not video_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid YouTube URL."
+        )
+
+    # --------------------------------------------------------
     # Fetch Transcript
+    # --------------------------------------------------------
+
     try:
+
         api = YouTubeTranscriptApi()
-        if request.language == "auto":
-            transcript_list = api.list(video_id)
-            t = next(iter(transcript_list))
-            transcript_data = t.fetch()
-        else:
-            transcript_list = api.list(video_id)
-            t = transcript_list.find_transcript([request.language])
-            transcript_data = t.fetch()
-        
-        transcript = " ".join(chunk.text for chunk in transcript_data)
+
+        # youtube-transcript-api 1.2.4
+        transcript_data = api.fetch(video_id)
+
+        # Convert transcript objects into plain text
+        transcript = " ".join(
+            chunk.text
+            for chunk in transcript_data
+        )
+
+        if not transcript.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Transcript is empty."
+            )
+
     except TranscriptsDisabled:
-        raise HTTPException(status_code=400, detail="Captions are disabled for this video.")
+
+        raise HTTPException(
+            status_code=400,
+            detail="Captions are disabled for this video."
+        )
+
     except NoTranscriptFound:
-        raise HTTPException(status_code=400, detail="Requested transcript not found for this language.")
+
+        raise HTTPException(
+            status_code=400,
+            detail="No transcript was found for this video."
+        )
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching transcript: {str(e)}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching transcript: {str(e)}"
+        )
+
+    # --------------------------------------------------------
+    # Create RAG chain
+    # --------------------------------------------------------
 
     setup_rag_chain(transcript)
-    return {"success": True, "message": "Video processed successfully"}
 
+    return {
+        "success": True,
+        "message": "Video processed successfully",
+    }
+
+
+# ============================================================
+# Process PDF
+# ============================================================
 
 @app.post("/process-pdf")
 async def process_pdf(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        reader = PdfReader(io.BytesIO(contents))
-        text = ""
-        for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\\n"
-        
-        if not text.strip():
-            raise HTTPException(status_code=400, detail="Could not extract text from PDF.")
-        
-        setup_rag_chain(text)
-        return {"success": True, "message": "PDF processed successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
 
+    try:
+
+        # ----------------------------------------------------
+        # Read PDF
+        # ----------------------------------------------------
+
+        contents = await file.read()
+
+        reader = PdfReader(
+            io.BytesIO(contents)
+        )
+
+        # ----------------------------------------------------
+        # Extract text
+        # ----------------------------------------------------
+
+        text = ""
+
+        for page in reader.pages:
+
+            page_text = page.extract_text()
+
+            if page_text:
+                text += page_text + "\n"
+
+        # ----------------------------------------------------
+        # Check extracted text
+        # ----------------------------------------------------
+
+        if not text.strip():
+
+            raise HTTPException(
+                status_code=400,
+                detail="Could not extract text from PDF."
+            )
+
+        # ----------------------------------------------------
+        # Create RAG chain
+        # ----------------------------------------------------
+
+        setup_rag_chain(text)
+
+        return {
+            "success": True,
+            "message": "PDF processed successfully",
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing PDF: {str(e)}"
+        )
+
+
+# ============================================================
+# Chat
+# ============================================================
 
 @app.post("/chat")
 def chat(request: ChatRequest):
+
     global rag_chain
 
-    if not rag_chain:
-        raise HTTPException(status_code=400, detail="Please process a video or PDF first.")
+    # --------------------------------------------------------
+    # Check whether document/video was processed
+    # --------------------------------------------------------
+
+    if rag_chain is None:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Please process a video or PDF first."
+        )
 
     try:
-        # Format the chat history into a string
-        history_str = "\n".join(f"{msg.role.capitalize()}: {msg.content}" for msg in request.history)
+
+        # ----------------------------------------------------
+        # Format chat history
+        # ----------------------------------------------------
+
+        history_str = "\n".join(
+            f"{msg.role.capitalize()}: {msg.content}"
+            for msg in request.history
+        )
+
         if not history_str:
             history_str = "No previous history."
-            
-        response = rag_chain.invoke({
-            "question": request.query,
-            "history": history_str
-        })
-        return {"answer": response}
+
+        # ----------------------------------------------------
+        # Run RAG
+        # ----------------------------------------------------
+
+        response = rag_chain.invoke(
+            {
+                "question": request.query,
+                "history": history_str,
+            }
+        )
+
+        return {
+            "answer": response
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during chat: {str(e)}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error during chat: {str(e)}"
+        )
+
+
+# ============================================================
+# Health Check
+# ============================================================
+
+@app.get("/")
+def root():
+
+    return {
+        "message": "YouTube RAG API is running"
+    }
+
