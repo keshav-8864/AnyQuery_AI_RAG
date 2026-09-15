@@ -18,7 +18,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [isSending, setIsSending] = useState(false);
 
-  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+  const BACKEND_URL = process.env.NEXT_BACKEND_URL || "http://localhost:8000";
 
   const handleProcessVideo = async () => {
     if (!url) return;
