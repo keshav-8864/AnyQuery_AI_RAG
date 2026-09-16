@@ -18,7 +18,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [isSending, setIsSending] = useState(false);
 
-  const NEXT_BACKEND_URL = process.env.NEXT_BACKEND_URL || "http://localhost:8000";
+  const NEXT_BACKEND_URL = process.env.NEXT_BACKEND_URL || "https://query-ai-7gg0.onrender.com";
 
   const handleProcessVideo = async () => {
     if (!url) return;
