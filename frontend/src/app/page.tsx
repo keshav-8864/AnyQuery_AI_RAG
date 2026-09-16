@@ -53,7 +53,7 @@ export default function Home() {
     formData.append("file", pdfFile);
     
     try {
-      const res = await fetch(`${BACKEND_URL}/process-pdf`, {
+      const res = await fetch(`${NEXT_BACKEND_URL}/process-pdf`, {
         method: "POST",
         body: formData,
       });
@@ -81,7 +81,7 @@ export default function Home() {
     setIsSending(true);
 
     try {
-      const res = await fetch(`${BACKEND_URL}/chat`, {
+      const res = await fetch(`${NEXT_BACKEND_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
