@@ -18,14 +18,14 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [isSending, setIsSending] = useState(false);
 
-  const BACKEND_URL = process.env.NEXT_BACKEND_URL || "http://localhost:8000";
+  const NEXT_BACKEND_URL = process.env.NEXT_BACKEND_URL || "http://localhost:8000";
 
   const handleProcessVideo = async () => {
     if (!url) return;
     setIsProcessing(true);
     setIsProcessed(false);
     try {
-      const res = await fetch(`${BACKEND_URL}/process`, {
+      const res = await fetch(`${NEXT_BACKEND_URL}/process`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, language }),
